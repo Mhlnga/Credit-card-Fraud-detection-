@@ -972,5 +972,5 @@ st.markdown("---")
 
 st.caption(
     "Credit Card Fraud Detection System | "
-    "CNN-Based Deep Learning Application"
+    "CNN-Based Deep Learning Application_By_Thembinkosi Emmanuel Mhlanga"
 )
