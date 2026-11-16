@@ -3,7 +3,11 @@ import streamlit as st
 import os
 import io
 import tempfile
+import pandas as pd
+
+from pathlib import Path
 from datetime import datetime
+
 
 # =====================================================
 # 1. PAGE CONFIGURATION
@@ -15,6 +19,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
 
 # =====================================================
 # 2. APPLICATION TITLE
@@ -28,6 +33,7 @@ st.write(
 )
 
 st.markdown("---")
+
 
 # =====================================================
 # 3. NAVIGATION - DISPLAY BEFORE LOADING THE MODEL
@@ -51,6 +57,7 @@ page = st.sidebar.radio(
 st.sidebar.markdown("---")
 st.sidebar.caption("CNN-Based Deep Learning Application")
 
+
 # =====================================================
 # 4. SESSION HISTORY
 # =====================================================
@@ -67,96 +74,271 @@ if "batch_download_data" not in st.session_state:
 if "batch_filename" not in st.session_state:
     st.session_state.batch_filename = None
 
+
 # =====================================================
 # 5. MODEL FILE LOCATIONS
 # =====================================================
 
-MODEL_PATH = "credit_card_fraud_cnn.keras"
-SCALER_PATH = "credit_card_scaler.pkl"
-FEATURES_PATH = "credit_card_features.pkl"
+BASE_DIR = Path(__file__).resolve().parent
+
+
+def find_model_file(filename):
+
+    """
+    Search for a model file in the project directory
+    and its subdirectories.
+
+    Ignore Git and virtual environment directories.
+    """
+
+    for root, directories, files in os.walk(BASE_DIR):
+
+        directories[:] = [
+            directory for directory in directories
+            if directory not in [
+                ".git",
+                ".venv",
+                "venv",
+                "__pycache__"
+            ]
+        ]
+
+        for file in files:
+
+            if file.lower() == filename.lower():
+
+                return Path(root) / file
+
+    return None
+
+
+MODEL_PATH = find_model_file(
+    "credit_card_fraud_cnn.keras"
+)
+
+SCALER_PATH = find_model_file(
+    "credit_card_scaler.pkl"
+)
+
+FEATURES_PATH = find_model_file(
+    "credit_card_features.pkl"
+)
+
 
 # =====================================================
-# 6. LOAD MODEL ONLY WHEN PREDICTIONS ARE REQUIRED
+# 6. MODEL FILE DIAGNOSTICS
+# =====================================================
+
+def show_model_diagnostics():
+
+    st.subheader("Model File Diagnostics")
+
+    st.write("Application directory:")
+
+    st.code(str(BASE_DIR))
+
+    st.write("Files detected by Streamlit:")
+
+    detected_files = []
+
+    for root, directories, files in os.walk(BASE_DIR):
+
+        directories[:] = [
+            directory for directory in directories
+            if directory not in [
+                ".git",
+                ".venv",
+                "venv",
+                "__pycache__"
+            ]
+        ]
+
+        for file in files:
+
+            file_path = Path(root) / file
+
+            relative_path = file_path.relative_to(BASE_DIR)
+
+            detected_files.append(str(relative_path))
+
+    if detected_files:
+
+        st.code("\n".join(detected_files))
+
+    else:
+
+        st.warning("No project files were detected.")
+
+    st.write("Required model files:")
+
+    required_files = {
+        "CNN Model": MODEL_PATH,
+        "Scaler": SCALER_PATH,
+        "Feature Names": FEATURES_PATH
+    }
+
+    for name, path in required_files.items():
+
+        if path is not None and path.is_file():
+
+            size_mb = path.stat().st_size / (1024 * 1024)
+
+            st.success(
+                f"{name}: Found ({size_mb:.2f} MB)"
+            )
+
+        else:
+
+            st.error(f"{name}: Missing")
+
+
+def is_git_lfs_pointer(file_path):
+
+    """
+    Check whether a file contains a Git LFS pointer
+    instead of the actual model file.
+    """
+
+    try:
+
+        with open(file_path, "rb") as file:
+
+            first_line = file.readline(200)
+
+        return first_line.startswith(
+            b"version https://git-lfs.github.com/spec/v1"
+        )
+
+    except Exception:
+
+        return False
+
+
+# =====================================================
+# 7. LOAD MODEL ONLY WHEN PREDICTIONS ARE REQUIRED
 # =====================================================
 
 @st.cache_resource
-def load_model_files():
+def load_model_files(model_path, scaler_path, features_path):
 
     import tensorflow as tf
     import joblib
 
     loaded_model = tf.keras.models.load_model(
-        MODEL_PATH,
+        model_path,
         compile=False
     )
 
-    loaded_scaler = joblib.load(SCALER_PATH)
+    loaded_scaler = joblib.load(
+        scaler_path
+    )
 
-    loaded_features = joblib.load(FEATURES_PATH)
+    loaded_features = joblib.load(
+        features_path
+    )
 
     return loaded_model, loaded_scaler, loaded_features
 
 
 def get_model():
 
-    required_files = [
-        MODEL_PATH,
-        SCALER_PATH,
-        FEATURES_PATH
-    ]
+    required_files = {
+        "CNN Model": MODEL_PATH,
+        "Scaler": SCALER_PATH,
+        "Feature Names": FEATURES_PATH
+    }
 
     missing_files = [
-        filename for filename in required_files
-        if not os.path.isfile(filename)
+        name
+        for name, path in required_files.items()
+        if path is None or not path.is_file()
     ]
 
     if missing_files:
 
-        st.error("Some required model files are missing:")
+        st.error(
+            "Some required model files are missing:"
+        )
 
         for filename in missing_files:
+
             st.write(f"- {filename}")
+
+        show_model_diagnostics()
+
+        st.warning(
+            "Upload the missing model file to the "
+            "GitHub repository used by Streamlit."
+        )
+
+        return None
+
+    # Check whether the CNN file is only an LFS pointer
+    if is_git_lfs_pointer(MODEL_PATH):
+
+        st.error(
+            "The CNN model is a Git LFS pointer, "
+            "not the actual model file."
+        )
+
+        st.info(
+            "Streamlit needs access to the actual "
+            ".keras model file."
+        )
+
+        show_model_diagnostics()
 
         return None
 
     try:
 
-        model, scaler, features = load_model_files()
+        model, scaler, features = load_model_files(
+            str(MODEL_PATH),
+            str(SCALER_PATH),
+            str(FEATURES_PATH)
+        )
 
         if len(features) != 30:
+
             st.error(
                 f"Expected 30 transaction features, "
                 f"but found {len(features)}."
             )
+
             return None
 
         return model, scaler, features
 
     except Exception as error:
 
-        st.error("Unable to load the trained CNN model.")
+        st.error(
+            "Unable to load the trained CNN model."
+        )
+
+        st.write("Technical error:")
 
         st.code(str(error))
+
+        show_model_diagnostics()
 
         return None
 
 
 # =====================================================
-# 7. PREDICTION FUNCTION
+# 8. PREDICTION FUNCTION
 # =====================================================
 
 def predict_transactions(data, model, scaler, features):
 
-    import numpy as np
-    import pandas as pd
-
     # Check required columns
     missing = [
-        feature for feature in features
+        feature
+        for feature in features
         if feature not in data.columns
     ]
 
     if missing:
+
         raise ValueError(
             f"Missing required columns: {missing}"
         )
@@ -171,6 +353,7 @@ def predict_transactions(data, model, scaler, features):
     )
 
     if data.isnull().values.any():
+
         raise ValueError(
             "The transaction data contains missing "
             "or non-numeric values."
@@ -201,12 +384,14 @@ def predict_transactions(data, model, scaler, features):
 
 
 # =====================================================
-# 8. HOME PAGE
+# 9. HOME PAGE
 # =====================================================
 
 if page == "Home":
 
-    st.header("Welcome to the Fraud Detection System")
+    st.header(
+        "Welcome to the Fraud Detection System"
+    )
 
     st.write(
         """
@@ -249,19 +434,38 @@ if page == "Home":
 
     history = st.session_state.prediction_history
 
-    total = sum(item["Total"] for item in history)
-    fraud = sum(item["Fraud"] for item in history)
-    normal = sum(item["Normal"] for item in history)
+    total = sum(
+        item["Total"] for item in history
+    )
+
+    fraud = sum(
+        item["Fraud"] for item in history
+    )
+
+    normal = sum(
+        item["Normal"] for item in history
+    )
 
     col1, col2, col3 = st.columns(3)
 
-    col1.metric("Transactions Processed", f"{total:,}")
-    col2.metric("Potential Fraud", f"{fraud:,}")
-    col3.metric("Normal Transactions", f"{normal:,}")
+    col1.metric(
+        "Transactions Processed",
+        f"{total:,}"
+    )
+
+    col2.metric(
+        "Potential Fraud",
+        f"{fraud:,}"
+    )
+
+    col3.metric(
+        "Normal Transactions",
+        f"{normal:,}"
+    )
 
 
 # =====================================================
-# 9. SINGLE TRANSACTION PREDICTION
+# 10. SINGLE TRANSACTION PREDICTION
 # =====================================================
 
 elif page == "Single Transaction":
@@ -289,7 +493,11 @@ elif page == "Single Transaction":
 
             for index, feature in enumerate(features):
 
-                with (col1 if index % 2 == 0 else col2):
+                with (
+                    col1
+                    if index % 2 == 0
+                    else col2
+                ):
 
                     if feature == "Amount":
 
@@ -322,15 +530,22 @@ elif page == "Single Transaction":
                     columns=features
                 )
 
-                predictions, probabilities = predict_transactions(
-                    transaction,
-                    model,
-                    scaler,
-                    features
+                predictions, probabilities = (
+                    predict_transactions(
+                        transaction,
+                        model,
+                        scaler,
+                        features
+                    )
                 )
 
-                prediction = int(predictions[0])
-                probability = float(probabilities[0])
+                prediction = int(
+                    predictions[0]
+                )
+
+                probability = float(
+                    probabilities[0]
+                )
 
                 st.subheader("Prediction Result")
 
@@ -370,11 +585,12 @@ elif page == "Single Transaction":
             except Exception as error:
 
                 st.error("Prediction failed.")
+
                 st.code(str(error))
 
 
 # =====================================================
-# 10. BATCH PREDICTION
+# 11. BATCH PREDICTION
 # =====================================================
 
 elif page == "Batch Prediction":
@@ -394,7 +610,9 @@ elif page == "Batch Prediction":
 
     if uploaded_file is not None:
 
-        st.write(f"**File:** {uploaded_file.name}")
+        st.write(
+            f"**File:** {uploaded_file.name}"
+        )
 
         st.write(
             f"**File size:** "
@@ -416,8 +634,6 @@ elif page == "Batch Prediction":
 
                 try:
 
-                    import pandas as pd
-
                     # Create temporary output file
                     with tempfile.NamedTemporaryFile(
                         mode="w",
@@ -430,15 +646,19 @@ elif page == "Batch Prediction":
                         temp_path = temp_file.name
 
                     total_transactions = 0
+
                     total_fraud = 0
+
                     total_normal = 0
 
                     preview = []
+
                     first_chunk = True
 
                     uploaded_file.seek(0)
 
                     progress = st.progress(0)
+
                     status = st.empty()
 
                     # Process CSV in batches
@@ -484,12 +704,15 @@ elif page == "Batch Prediction":
 
                         # Keep up to 1000 rows for display
                         current_preview = sum(
-                            len(item) for item in preview
+                            len(item)
+                            for item in preview
                         )
 
                         if current_preview < 1000:
 
-                            remaining = 1000 - current_preview
+                            remaining = (
+                                1000 - current_preview
+                            )
 
                             preview.append(
                                 chunk.head(remaining)
@@ -506,11 +729,15 @@ elif page == "Batch Prediction":
                         first_chunk = False
 
                         status.write(
-                            f"Processed {total_transactions:,} transactions..."
+                            f"Processed "
+                            f"{total_transactions:,} transactions..."
                         )
 
-                    # Read the completed results
-                    with open(temp_path, "rb") as output_file:
+                    # Read completed results
+                    with open(
+                        temp_path,
+                        "rb"
+                    ) as output_file:
 
                         download_data = output_file.read()
 
@@ -523,7 +750,9 @@ elif page == "Batch Prediction":
                         else pd.DataFrame()
                     )
 
-                    st.session_state.batch_download_data = download_data
+                    st.session_state.batch_download_data = (
+                        download_data
+                    )
 
                     st.session_state.batch_filename = (
                         "fraud_detection_results.csv"
@@ -558,13 +787,18 @@ elif page == "Batch Prediction":
 
                 except Exception as error:
 
-                    st.error("Batch prediction failed.")
+                    st.error(
+                        "Batch prediction failed."
+                    )
 
                     st.code(str(error))
 
                 finally:
 
-                    if temp_path and os.path.exists(temp_path):
+                    if (
+                        temp_path
+                        and os.path.exists(temp_path)
+                    ):
 
                         os.remove(temp_path)
 
@@ -598,7 +832,7 @@ elif page == "Batch Prediction":
 
 
 # =====================================================
-# 11. PREDICTION HISTORY
+# 12. PREDICTION HISTORY
 # =====================================================
 
 elif page == "Prediction History":
@@ -616,17 +850,36 @@ elif page == "Prediction History":
 
         history_df = pd.DataFrame(history)
 
-        total = int(history_df["Total"].sum())
-        fraud = int(history_df["Fraud"].sum())
-        normal = int(history_df["Normal"].sum())
+        total = int(
+            history_df["Total"].sum()
+        )
+
+        fraud = int(
+            history_df["Fraud"].sum()
+        )
+
+        normal = int(
+            history_df["Normal"].sum()
+        )
 
         st.subheader("History Summary")
 
         col1, col2, col3 = st.columns(3)
 
-        col1.metric("Total Processed", f"{total:,}")
-        col2.metric("Potential Fraud", f"{fraud:,}")
-        col3.metric("Normal Transactions", f"{normal:,}")
+        col1.metric(
+            "Total Processed",
+            f"{total:,}"
+        )
+
+        col2.metric(
+            "Potential Fraud",
+            f"{fraud:,}"
+        )
+
+        col3.metric(
+            "Normal Transactions",
+            f"{normal:,}"
+        )
 
         st.subheader("Processing History")
 
@@ -667,7 +920,7 @@ elif page == "Prediction History":
 
 
 # =====================================================
-# 12. ABOUT PAGE
+# 13. ABOUT PAGE
 # =====================================================
 
 elif page == "About":
@@ -712,7 +965,7 @@ elif page == "About":
 
 
 # =====================================================
-# 13. FOOTER
+# 14. FOOTER
 # =====================================================
 
 st.markdown("---")
