@@ -18,7 +18,7 @@ st.write(
     "to identify potentially fraudulent credit card transactions."
 )
 
-MODEL_PATH = "credit_card_fraud_cnn.keras"
+MODEL_PATH = "credit_card_fraud_cnn .keras"
 SCALER_PATH = "credit_card_scaler.pkl"
 FEATURES_PATH = "credit_card_features.pkl"
 
