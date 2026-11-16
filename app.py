@@ -1,19 +1,13 @@
 
+import streamlit as st
 import os
 import io
 import tempfile
 from datetime import datetime
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import tensorflow as tf
-import joblib
-
-
-# =========================================================
+# =====================================================
 # 1. PAGE CONFIGURATION
-# =========================================================
+# =====================================================
 
 st.set_page_config(
     page_title="Credit Card Fraud Detection System",
@@ -22,33 +16,44 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-
-# =========================================================
+# =====================================================
 # 2. APPLICATION TITLE
-# =========================================================
+# =====================================================
 
 st.title("💳 Credit Card Fraud Detection System")
 
 st.write(
-    "An intelligent fraud detection application powered by "
-    "a Convolutional Neural Network (CNN)."
+    "An intelligent fraud detection application powered "
+    "by a Convolutional Neural Network (CNN)."
 )
 
 st.markdown("---")
 
+# =====================================================
+# 3. NAVIGATION - DISPLAY BEFORE LOADING THE MODEL
+# =====================================================
 
-# =========================================================
-# 3. MODEL FILE PATHS
-# =========================================================
+st.sidebar.title("💳 Fraud Detection System")
+st.sidebar.markdown("---")
 
-MODEL_PATH = "credit_card_fraud_cnn.keras"
-SCALER_PATH = "credit_card_scaler.pkl"
-FEATURES_PATH = "credit_card_features.pkl"
+page = st.sidebar.radio(
+    "Choose a page",
+    [
+        "Home",
+        "Single Transaction",
+        "Batch Prediction",
+        "Prediction History",
+        "About"
+    ],
+    key="navigation"
+)
 
+st.sidebar.markdown("---")
+st.sidebar.caption("CNN-Based Deep Learning Application")
 
-# =========================================================
-# 4. INITIALISE SESSION HISTORY
-# =========================================================
+# =====================================================
+# 4. SESSION HISTORY
+# =====================================================
 
 if "prediction_history" not in st.session_state:
     st.session_state.prediction_history = []
@@ -62,42 +67,23 @@ if "batch_download_data" not in st.session_state:
 if "batch_filename" not in st.session_state:
     st.session_state.batch_filename = None
 
+# =====================================================
+# 5. MODEL FILE LOCATIONS
+# =====================================================
 
-# =========================================================
-# 5. CHECK REQUIRED MODEL FILES
-# =========================================================
+MODEL_PATH = "credit_card_fraud_cnn.keras"
+SCALER_PATH = "credit_card_scaler.pkl"
+FEATURES_PATH = "credit_card_features.pkl"
 
-required_files = [
-    MODEL_PATH,
-    SCALER_PATH,
-    FEATURES_PATH
-]
-
-missing_files = [
-    filename for filename in required_files
-    if not os.path.exists(filename)
-]
-
-if missing_files:
-    st.error("Required model files are missing.")
-
-    for filename in missing_files:
-        st.write(f"- {filename}")
-
-    st.info(
-        "Upload all three model files into the same "
-        "GitHub folder as app.py."
-    )
-
-    st.stop()
-
-
-# =========================================================
-# 6. LOAD THE TRAINED CNN MODEL
-# =========================================================
+# =====================================================
+# 6. LOAD MODEL ONLY WHEN PREDICTIONS ARE REQUIRED
+# =====================================================
 
 @st.cache_resource
 def load_model_files():
+
+    import tensorflow as tf
+    import joblib
 
     loaded_model = tf.keras.models.load_model(
         MODEL_PATH,
@@ -111,94 +97,112 @@ def load_model_files():
     return loaded_model, loaded_scaler, loaded_features
 
 
-try:
+def get_model():
 
-    model, scaler, features = load_model_files()
+    required_files = [
+        MODEL_PATH,
+        SCALER_PATH,
+        FEATURES_PATH
+    ]
 
-except Exception as error:
+    missing_files = [
+        filename for filename in required_files
+        if not os.path.isfile(filename)
+    ]
 
-    st.error("Unable to load the trained CNN model.")
+    if missing_files:
 
-    st.code(str(error))
+        st.error("Some required model files are missing:")
 
-    st.stop()
+        for filename in missing_files:
+            st.write(f"- {filename}")
+
+        return None
+
+    try:
+
+        model, scaler, features = load_model_files()
+
+        if len(features) != 30:
+            st.error(
+                f"Expected 30 transaction features, "
+                f"but found {len(features)}."
+            )
+            return None
+
+        return model, scaler, features
+
+    except Exception as error:
+
+        st.error("Unable to load the trained CNN model.")
+
+        st.code(str(error))
+
+        return None
 
 
-if len(features) != 30:
-
-    st.error(
-        f"The model expects 30 features, but "
-        f"{len(features)} were loaded."
-    )
-
-    st.stop()
-
-
-st.success("CNN model loaded successfully!")
-
-
-# =========================================================
+# =====================================================
 # 7. PREDICTION FUNCTION
-# =========================================================
+# =====================================================
 
-def predict_transactions(data):
+def predict_transactions(data, model, scaler, features):
 
-    # Arrange columns in the same order used during training
-    data = data[features].copy()
+    import numpy as np
+    import pandas as pd
 
-    # Convert all values to numeric
-    data = data.apply(pd.to_numeric, errors="coerce")
+    # Check required columns
+    missing = [
+        feature for feature in features
+        if feature not in data.columns
+    ]
 
-    if data.isnull().values.any():
-
+    if missing:
         raise ValueError(
-            "The uploaded data contains missing or "
-            "non-numeric feature values."
+            f"Missing required columns: {missing}"
         )
 
-    # Apply the original training scaler
+    # Arrange columns in training order
+    data = data[features].copy()
+
+    # Convert values to numbers
+    data = data.apply(
+        pd.to_numeric,
+        errors="coerce"
+    )
+
+    if data.isnull().values.any():
+        raise ValueError(
+            "The transaction data contains missing "
+            "or non-numeric values."
+        )
+
+    # Scale the transaction data
     scaled_data = scaler.transform(data)
 
-    # Reshape data for CNN input
+    # Reshape for CNN
     reshaped_data = scaled_data.reshape(
         scaled_data.shape[0],
-        30,
+        len(features),
         1
     )
 
-    # Predict fraud probabilities
+    # Predict probabilities
     probabilities = model.predict(
         reshaped_data,
         verbose=0
     ).reshape(-1)
 
     # Classify transactions
-    predictions = (probabilities >= 0.5).astype(int)
+    predictions = (
+        probabilities >= 0.5
+    ).astype(int)
 
     return predictions, probabilities
 
 
-# =========================================================
-# 8. NAVIGATION MENU
-# =========================================================
-
-st.sidebar.title("Navigation")
-
-page = st.sidebar.radio(
-    "Choose a page",
-    [
-        "Home",
-        "Single Transaction",
-        "Batch Prediction",
-        "Prediction History",
-        "About"
-    ]
-)
-
-
-# =========================================================
-# 9. HOME PAGE
-# =========================================================
+# =====================================================
+# 8. HOME PAGE
+# =====================================================
 
 if page == "Home":
 
@@ -207,12 +211,11 @@ if page == "Home":
     st.write(
         """
         This application uses a trained Convolutional Neural
-        Network to identify potentially fraudulent credit
-        card transactions.
+        Network (CNN) to identify potentially fraudulent
+        credit card transactions.
 
-        The system analyses transaction information and
-        predicts whether a transaction is normal or potentially
-        fraudulent.
+        It analyses transaction information and predicts
+        whether transactions are normal or potentially fraudulent.
         """
     )
 
@@ -247,132 +250,132 @@ if page == "Home":
     history = st.session_state.prediction_history
 
     total = sum(item["Total"] for item in history)
-
     fraud = sum(item["Fraud"] for item in history)
-
     normal = sum(item["Normal"] for item in history)
 
     col1, col2, col3 = st.columns(3)
 
     col1.metric("Transactions Processed", f"{total:,}")
-
     col2.metric("Potential Fraud", f"{fraud:,}")
-
     col3.metric("Normal Transactions", f"{normal:,}")
 
 
-# =========================================================
-# 10. SINGLE TRANSACTION PREDICTION
-# =========================================================
+# =====================================================
+# 9. SINGLE TRANSACTION PREDICTION
+# =====================================================
 
 elif page == "Single Transaction":
 
     st.header("Single Transaction Prediction")
 
     st.write(
-        "Enter the transaction information below "
+        "Enter the transaction details below "
         "to check whether it may be fraudulent."
     )
 
-    with st.form("single_transaction_form"):
+    model_data = get_model()
 
-        st.subheader("Transaction Information")
+    if model_data is not None:
 
-        values = {}
+        model, scaler, features = model_data
 
-        col1, col2 = st.columns(2)
+        with st.form("single_transaction_form"):
 
-        for index, feature in enumerate(features):
+            st.subheader("Transaction Information")
 
-            with (col1 if index % 2 == 0 else col2):
+            values = {}
 
-                default_value = 0.0
+            col1, col2 = st.columns(2)
 
-                if feature == "Amount":
-                    values[feature] = st.number_input(
-                        feature,
-                        min_value=0.0,
-                        value=0.0,
-                        format="%.6f"
+            for index, feature in enumerate(features):
+
+                with (col1 if index % 2 == 0 else col2):
+
+                    if feature == "Amount":
+
+                        values[feature] = st.number_input(
+                            feature,
+                            min_value=0.0,
+                            value=0.0,
+                            format="%.6f"
+                        )
+
+                    else:
+
+                        values[feature] = st.number_input(
+                            feature,
+                            value=0.0,
+                            format="%.6f"
+                        )
+
+            submitted = st.form_submit_button(
+                "Check Transaction",
+                use_container_width=True
+            )
+
+        if submitted:
+
+            try:
+
+                transaction = pd.DataFrame(
+                    [values],
+                    columns=features
+                )
+
+                predictions, probabilities = predict_transactions(
+                    transaction,
+                    model,
+                    scaler,
+                    features
+                )
+
+                prediction = int(predictions[0])
+                probability = float(probabilities[0])
+
+                st.subheader("Prediction Result")
+
+                st.metric(
+                    "Fraud Probability",
+                    f"{probability * 100:.2f}%"
+                )
+
+                if prediction == 1:
+
+                    st.error(
+                        "⚠️ Potentially Fraudulent Transaction"
                     )
+
                 else:
-                    values[feature] = st.number_input(
-                        feature,
-                        value=default_value,
-                        format="%.6f"
+
+                    st.success(
+                        "✅ Transaction Classified as Normal"
                     )
 
-        submitted = st.form_submit_button(
-            "Check Transaction",
-            use_container_width=True
-        )
+                st.session_state.prediction_history.append({
 
-    if submitted:
+                    "Date": datetime.now().strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    ),
 
-        try:
+                    "Source": "Single Transaction",
 
-            transaction = pd.DataFrame(
-                [values],
-                columns=features
-            )
+                    "Total": 1,
 
-            predictions, probabilities = predict_transactions(
-                transaction
-            )
+                    "Fraud": prediction,
 
-            prediction = int(predictions[0])
+                    "Normal": 1 - prediction
 
-            probability = float(probabilities[0])
+                })
 
-            fraud_count = prediction
-            normal_count = 1 - prediction
+            except Exception as error:
 
-            st.subheader("Prediction Result")
-
-            st.metric(
-                "Fraud Probability",
-                f"{probability * 100:.2f}%"
-            )
-
-            if prediction == 1:
-
-                st.error(
-                    "⚠️ Potentially Fraudulent Transaction"
-                )
-
-            else:
-
-                st.success(
-                    "✅ Transaction Classified as Normal"
-                )
-
-            # Add transaction to history
-            st.session_state.prediction_history.append({
-
-                "Date": datetime.now().strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
-
-                "Source": "Single Transaction",
-
-                "Total": 1,
-
-                "Fraud": fraud_count,
-
-                "Normal": normal_count
-
-            })
-
-        except Exception as error:
-
-            st.error(
-                f"Prediction error: {str(error)}"
-            )
+                st.error("Prediction failed.")
+                st.code(str(error))
 
 
-# =========================================================
-# 11. BATCH PREDICTION
-# =========================================================
+# =====================================================
+# 10. BATCH PREDICTION
+# =====================================================
 
 elif page == "Batch Prediction":
 
@@ -380,7 +383,7 @@ elif page == "Batch Prediction":
 
     st.write(
         "Upload a CSV file containing credit card "
-        "transactions to detect potentially fraudulent activity."
+        "transactions for fraud detection."
     )
 
     uploaded_file = st.file_uploader(
@@ -391,9 +394,7 @@ elif page == "Batch Prediction":
 
     if uploaded_file is not None:
 
-        st.write(
-            f"**Selected file:** {uploaded_file.name}"
-        )
+        st.write(f"**File:** {uploaded_file.name}")
 
         st.write(
             f"**File size:** "
@@ -405,221 +406,190 @@ elif page == "Batch Prediction":
             use_container_width=True
         ):
 
-            temp_path = None
+            model_data = get_model()
 
-            try:
+            if model_data is not None:
 
-                # Reset file position
-                uploaded_file.seek(0)
+                model, scaler, features = model_data
 
-                # Process file in batches
-                chunks = pd.read_csv(
-                    uploaded_file,
-                    chunksize=5000
-                )
+                temp_path = None
 
-                total_transactions = 0
+                try:
 
-                total_fraud = 0
+                    import pandas as pd
 
-                total_normal = 0
+                    # Create temporary output file
+                    with tempfile.NamedTemporaryFile(
+                        mode="w",
+                        suffix=".csv",
+                        delete=False,
+                        encoding="utf-8",
+                        newline=""
+                    ) as temp_file:
 
-                preview = []
+                        temp_path = temp_file.name
 
-                csv_buffer = io.StringIO()
+                    total_transactions = 0
+                    total_fraud = 0
+                    total_normal = 0
 
-                first_chunk = True
+                    preview = []
+                    first_chunk = True
 
-                progress_bar = st.progress(0)
+                    uploaded_file.seek(0)
 
-                status_text = st.empty()
+                    progress = st.progress(0)
+                    status = st.empty()
 
-                # Create temporary output file
-                with tempfile.NamedTemporaryFile(
-                    mode="w",
-                    suffix=".csv",
-                    delete=False,
-                    encoding="utf-8",
-                    newline=""
-                ) as temp_file:
+                    # Process CSV in batches
+                    chunks = pd.read_csv(
+                        uploaded_file,
+                        chunksize=5000
+                    )
 
-                    temp_path = temp_file.name
+                    for chunk in chunks:
 
-                # Process each CSV batch
-                for chunk in chunks:
-
-                    # Check required columns
-                    missing_columns = [
-                        feature for feature in features
-                        if feature not in chunk.columns
-                    ]
-
-                    if missing_columns:
-
-                        raise ValueError(
-                            "Your CSV file is missing these "
-                            f"columns: {missing_columns}"
+                        predictions, probabilities = (
+                            predict_transactions(
+                                chunk,
+                                model,
+                                scaler,
+                                features
+                            )
                         )
 
-                    # Predict transactions
-                    predictions, probabilities = (
-                        predict_transactions(chunk)
-                    )
+                        chunk = chunk.copy()
 
-                    # Add prediction information
-                    chunk = chunk.copy()
+                        chunk["Prediction"] = predictions
 
-                    chunk["Prediction"] = predictions
+                        chunk["Fraud Probability"] = probabilities
 
-                    chunk["Fraud Probability"] = probabilities
+                        chunk["Result"] = pd.Series(
+                            predictions,
+                            index=chunk.index
+                        ).map({
+                            0: "Normal",
+                            1: "Potential Fraud"
+                        })
 
-                    chunk["Result"] = pd.Series(
-                        predictions,
-                        index=chunk.index
-                    ).map({
-                        0: "Normal",
-                        1: "Potential Fraud"
-                    })
+                        total_transactions += len(chunk)
 
-                    # Update statistics
-                    total_transactions += len(chunk)
+                        total_fraud += int(
+                            (predictions == 1).sum()
+                        )
 
-                    total_fraud += int(
-                        (predictions == 1).sum()
-                    )
+                        total_normal += int(
+                            (predictions == 0).sum()
+                        )
 
-                    total_normal += int(
-                        (predictions == 0).sum()
-                    )
-
-                    # Save first 1000 rows for display
-                    if sum(len(item) for item in preview) < 1000:
-
-                        remaining = 1000 - sum(
+                        # Keep up to 1000 rows for display
+                        current_preview = sum(
                             len(item) for item in preview
                         )
 
-                        preview.append(
-                            chunk.head(remaining)
+                        if current_preview < 1000:
+
+                            remaining = 1000 - current_preview
+
+                            preview.append(
+                                chunk.head(remaining)
+                            )
+
+                        # Save all results
+                        chunk.to_csv(
+                            temp_path,
+                            mode="a",
+                            index=False,
+                            header=first_chunk
                         )
 
-                    # Write results to temporary CSV
-                    chunk.to_csv(
-                        temp_path,
-                        mode="a",
-                        index=False,
-                        header=first_chunk
+                        first_chunk = False
+
+                        status.write(
+                            f"Processed {total_transactions:,} transactions..."
+                        )
+
+                    # Read the completed results
+                    with open(temp_path, "rb") as output_file:
+
+                        download_data = output_file.read()
+
+                    st.session_state.batch_results = (
+                        pd.concat(
+                            preview,
+                            ignore_index=True
+                        )
+                        if preview
+                        else pd.DataFrame()
                     )
 
-                    first_chunk = False
+                    st.session_state.batch_download_data = download_data
 
-                    status_text.write(
-                        f"Processed {total_transactions:,} transactions..."
+                    st.session_state.batch_filename = (
+                        "fraud_detection_results.csv"
                     )
 
-                # Read completed output
-                with open(
-                    temp_path,
-                    "rb"
-                ) as output_file:
+                    # Record batch history
+                    st.session_state.prediction_history.append({
 
-                    download_data = output_file.read()
+                        "Date": datetime.now().strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        ),
 
-                # Save results in session
-                st.session_state.batch_results = pd.concat(
-                    preview,
-                    ignore_index=True
-                ) if preview else pd.DataFrame()
+                        "Source": uploaded_file.name,
 
-                st.session_state.batch_download_data = download_data
+                        "Total": total_transactions,
 
-                st.session_state.batch_filename = (
-                    "fraud_detection_results.csv"
-                )
+                        "Fraud": total_fraud,
 
-                # Add batch to history
-                st.session_state.prediction_history.append({
+                        "Normal": total_normal
 
-                    "Date": datetime.now().strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    ),
+                    })
 
-                    "Source": uploaded_file.name,
+                    progress.progress(100)
 
-                    "Total": total_transactions,
+                    status.success(
+                        "All transactions processed successfully!"
+                    )
 
-                    "Fraud": total_fraud,
+                    st.success(
+                        "Batch prediction completed."
+                    )
 
-                    "Normal": total_normal
+                except Exception as error:
 
-                })
+                    st.error("Batch prediction failed.")
 
-                progress_bar.progress(100)
+                    st.code(str(error))
 
-                status_text.success(
-                    "Batch prediction completed successfully!"
-                )
+                finally:
 
-                st.success(
-                    "All transactions have been processed."
-                )
+                    if temp_path and os.path.exists(temp_path):
 
-            except Exception as error:
+                        os.remove(temp_path)
 
-                st.error(
-                    f"Batch prediction failed: {str(error)}"
-                )
-
-            finally:
-
-                if temp_path and os.path.exists(temp_path):
-
-                    os.remove(temp_path)
-
-    # Display results after processing
+    # Display previous batch results
     if st.session_state.batch_results is not None:
 
         st.markdown("---")
 
         st.subheader("Prediction Results")
 
-        history = st.session_state.prediction_history
-
-        if history:
-
-            latest = history[-1]
-
-            col1, col2, col3 = st.columns(3)
-
-            col1.metric(
-                "Total Transactions",
-                f"{latest['Total']:,}"
-            )
-
-            col2.metric(
-                "Normal Transactions",
-                f"{latest['Normal']:,}"
-            )
-
-            col3.metric(
-                "Potential Fraud",
-                f"{latest['Fraud']:,}"
-            )
+        results = st.session_state.batch_results
 
         st.caption(
-            "The table below displays up to the first "
-            "1,000 processed transactions."
+            "Showing up to the first 1,000 transactions."
         )
 
         st.dataframe(
-            st.session_state.batch_results,
+            results,
             use_container_width=True
         )
 
         if st.session_state.batch_download_data:
 
             st.download_button(
-                label="Download All Prediction Results",
+                "Download All Prediction Results",
                 data=st.session_state.batch_download_data,
                 file_name=st.session_state.batch_filename,
                 mime="text/csv",
@@ -627,9 +597,9 @@ elif page == "Batch Prediction":
             )
 
 
-# =========================================================
-# 12. PREDICTION HISTORY
-# =========================================================
+# =====================================================
+# 11. PREDICTION HISTORY
+# =====================================================
 
 elif page == "Prediction History":
 
@@ -646,30 +616,17 @@ elif page == "Prediction History":
 
         history_df = pd.DataFrame(history)
 
+        total = int(history_df["Total"].sum())
+        fraud = int(history_df["Fraud"].sum())
+        normal = int(history_df["Normal"].sum())
+
         st.subheader("History Summary")
-
-        total_transactions = history_df["Total"].sum()
-
-        total_fraud = history_df["Fraud"].sum()
-
-        total_normal = history_df["Normal"].sum()
 
         col1, col2, col3 = st.columns(3)
 
-        col1.metric(
-            "Total Processed",
-            f"{total_transactions:,}"
-        )
-
-        col2.metric(
-            "Potential Fraud",
-            f"{total_fraud:,}"
-        )
-
-        col3.metric(
-            "Normal Transactions",
-            f"{total_normal:,}"
-        )
+        col1.metric("Total Processed", f"{total:,}")
+        col2.metric("Potential Fraud", f"{fraud:,}")
+        col3.metric("Normal Transactions", f"{normal:,}")
 
         st.subheader("Processing History")
 
@@ -705,14 +662,13 @@ elif page == "Prediction History":
 
         st.info(
             "No prediction history is available yet. "
-            "Make a single prediction or upload a CSV file "
-            "to start building your history."
+            "Make a prediction or upload a CSV file first."
         )
 
 
-# =========================================================
-# 13. ABOUT PAGE
-# =========================================================
+# =====================================================
+# 12. ABOUT PAGE
+# =====================================================
 
 elif page == "About":
 
@@ -721,13 +677,13 @@ elif page == "About":
     st.write(
         """
         The Credit Card Fraud Detection System is an
-        artificial intelligence application developed
+        Artificial Intelligence application developed
         using Deep Learning.
 
         It uses a Convolutional Neural Network (CNN)
         trained on credit card transaction data.
 
-        The purpose of the system is to identify
+        The purpose of this system is to identify
         potentially fraudulent transactions and
         distinguish them from normal transactions.
         """
@@ -755,9 +711,9 @@ elif page == "About":
     )
 
 
-# =========================================================
-# 14. FOOTER
-# =========================================================
+# =====================================================
+# 13. FOOTER
+# =====================================================
 
 st.markdown("---")
 
