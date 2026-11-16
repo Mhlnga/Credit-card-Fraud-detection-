@@ -1,13 +1,16 @@
 
-import streamlit as st
 import os
 import io
 import tempfile
 from datetime import datetime
 
-# =====================================================
+import streamlit as st
+import pandas as pd
+
+
+# ==========================================================
 # 1. PAGE CONFIGURATION
-# =====================================================
+# ==========================================================
 
 st.set_page_config(
     page_title="Credit Card Fraud Detection System",
@@ -16,9 +19,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# =====================================================
+
+# ==========================================================
 # 2. APPLICATION TITLE
-# =====================================================
+# ==========================================================
 
 st.title("💳 Credit Card Fraud Detection System")
 
@@ -29,9 +33,10 @@ st.write(
 
 st.markdown("---")
 
-# =====================================================
-# 3. NAVIGATION - DISPLAY BEFORE LOADING THE MODEL
-# =====================================================
+
+# ==========================================================
+# 3. NAVIGATION MENU
+# ==========================================================
 
 st.sidebar.title("💳 Fraud Detection System")
 st.sidebar.markdown("---")
@@ -51,9 +56,10 @@ page = st.sidebar.radio(
 st.sidebar.markdown("---")
 st.sidebar.caption("CNN-Based Deep Learning Application")
 
-# =====================================================
-# 4. SESSION HISTORY
-# =====================================================
+
+# ==========================================================
+# 4. SESSION STATE
+# ==========================================================
 
 if "prediction_history" not in st.session_state:
     st.session_state.prediction_history = []
@@ -67,116 +73,162 @@ if "batch_download_data" not in st.session_state:
 if "batch_filename" not in st.session_state:
     st.session_state.batch_filename = None
 
-# =====================================================
-# 5. MODEL FILE LOCATIONS
-# =====================================================
 
-MODEL_PATH = "credit_card_fraud_cnn.keras"
-SCALER_PATH = "credit_card_scaler.pkl"
-FEATURES_PATH = "credit_card_features.pkl"
+# ==========================================================
+# 5. FIND MODEL FILES
+# ==========================================================
 
-# =====================================================
-# 6. LOAD MODEL ONLY WHEN PREDICTIONS ARE REQUIRED
-# =====================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def find_file(filename):
+
+    # Search the application directory and its subfolders
+    for root, directories, files in os.walk(BASE_DIR):
+
+        for file in files:
+
+            if file.lower() == filename.lower():
+
+                return os.path.join(root, file)
+
+    return None
+
+
+MODEL_PATH = find_file("credit_card_fraud_cnn.keras")
+SCALER_PATH = find_file("credit_card_scaler.pkl")
+FEATURES_PATH = find_file("credit_card_features.pkl")
+
+
+# ==========================================================
+# 6. LOAD THE TRAINED MODEL
+# ==========================================================
 
 @st.cache_resource
-def load_model_files():
+def load_model_files(model_path, scaler_path, features_path):
 
     import tensorflow as tf
     import joblib
 
     loaded_model = tf.keras.models.load_model(
-        MODEL_PATH,
+        model_path,
         compile=False
     )
 
-    loaded_scaler = joblib.load(SCALER_PATH)
+    loaded_scaler = joblib.load(scaler_path)
 
-    loaded_features = joblib.load(FEATURES_PATH)
+    loaded_features = joblib.load(features_path)
 
     return loaded_model, loaded_scaler, loaded_features
 
 
 def get_model():
 
-    required_files = [
-        MODEL_PATH,
-        SCALER_PATH,
-        FEATURES_PATH
+    model_files = {
+        "CNN Model": MODEL_PATH,
+        "Scaler": SCALER_PATH,
+        "Feature Names": FEATURES_PATH
+    }
+
+    missing = [
+        name for name, path in model_files.items()
+        if path is None or not os.path.isfile(path)
     ]
 
-    missing_files = [
-        filename for filename in required_files
-        if not os.path.isfile(filename)
-    ]
+    if missing:
 
-    if missing_files:
+        st.error("Some required model files are missing.")
 
-        st.error("Some required model files are missing:")
+        for name in missing:
+            st.write(f"- {name}")
 
-        for filename in missing_files:
-            st.write(f"- {filename}")
+        st.subheader("Files detected by Streamlit")
+
+        detected_files = []
+
+        for root, directories, files in os.walk(BASE_DIR):
+
+            for file in files:
+
+                relative_path = os.path.relpath(
+                    os.path.join(root, file),
+                    BASE_DIR
+                )
+
+                detected_files.append(relative_path)
+
+        st.write(detected_files)
+
+        st.warning(
+            "Check that the actual model files have been "
+            "uploaded to your GitHub repository."
+        )
 
         return None
 
     try:
 
-        model, scaler, features = load_model_files()
+        model, scaler, features = load_model_files(
+            MODEL_PATH,
+            SCALER_PATH,
+            FEATURES_PATH
+        )
 
         if len(features) != 30:
+
             st.error(
-                f"Expected 30 transaction features, "
-                f"but found {len(features)}."
+                f"The model expects 30 features, "
+                f"but {len(features)} were loaded."
             )
+
             return None
 
         return model, scaler, features
 
     except Exception as error:
 
-        st.error("Unable to load the trained CNN model.")
+        st.error("Unable to load the saved CNN model.")
 
         st.code(str(error))
 
         return None
 
 
-# =====================================================
+# ==========================================================
 # 7. PREDICTION FUNCTION
-# =====================================================
+# ==========================================================
 
 def predict_transactions(data, model, scaler, features):
 
-    import numpy as np
-    import pandas as pd
-
-    # Check required columns
-    missing = [
+    missing_columns = [
         feature for feature in features
         if feature not in data.columns
     ]
 
-    if missing:
+    if missing_columns:
+
         raise ValueError(
-            f"Missing required columns: {missing}"
+            f"Your CSV is missing these columns: "
+            f"{missing_columns}"
         )
 
-    # Arrange columns in training order
+    # Arrange features in training order
     data = data[features].copy()
 
-    # Convert values to numbers
+    # Convert values to numeric
     data = data.apply(
         pd.to_numeric,
         errors="coerce"
     )
 
     if data.isnull().values.any():
+
         raise ValueError(
             "The transaction data contains missing "
             "or non-numeric values."
         )
 
-    # Scale the transaction data
+    # Apply the original training scaler
     scaled_data = scaler.transform(data)
 
     # Reshape for CNN
@@ -186,13 +238,13 @@ def predict_transactions(data, model, scaler, features):
         1
     )
 
-    # Predict probabilities
+    # CNN prediction
     probabilities = model.predict(
         reshaped_data,
         verbose=0
     ).reshape(-1)
 
-    # Classify transactions
+    # Classification threshold
     predictions = (
         probabilities >= 0.5
     ).astype(int)
@@ -200,9 +252,9 @@ def predict_transactions(data, model, scaler, features):
     return predictions, probabilities
 
 
-# =====================================================
+# ==========================================================
 # 8. HOME PAGE
-# =====================================================
+# ==========================================================
 
 if page == "Home":
 
@@ -210,12 +262,12 @@ if page == "Home":
 
     st.write(
         """
-        This application uses a trained Convolutional Neural
+        This system uses a trained Convolutional Neural
         Network (CNN) to identify potentially fraudulent
         credit card transactions.
 
-        It analyses transaction information and predicts
-        whether transactions are normal or potentially fraudulent.
+        It analyses transaction information and classifies
+        transactions as normal or potentially fraudulent.
         """
     )
 
@@ -260,9 +312,9 @@ if page == "Home":
     col3.metric("Normal Transactions", f"{normal:,}")
 
 
-# =====================================================
+# ==========================================================
 # 9. SINGLE TRANSACTION PREDICTION
-# =====================================================
+# ==========================================================
 
 elif page == "Single Transaction":
 
@@ -373,9 +425,9 @@ elif page == "Single Transaction":
                 st.code(str(error))
 
 
-# =====================================================
+# ==========================================================
 # 10. BATCH PREDICTION
-# =====================================================
+# ==========================================================
 
 elif page == "Batch Prediction":
 
@@ -416,9 +468,6 @@ elif page == "Batch Prediction":
 
                 try:
 
-                    import pandas as pd
-
-                    # Create temporary output file
                     with tempfile.NamedTemporaryFile(
                         mode="w",
                         suffix=".csv",
@@ -441,13 +490,11 @@ elif page == "Batch Prediction":
                     progress = st.progress(0)
                     status = st.empty()
 
-                    # Process CSV in batches
-                    chunks = pd.read_csv(
+                    # Process 5,000 transactions at a time
+                    for chunk in pd.read_csv(
                         uploaded_file,
                         chunksize=5000
-                    )
-
-                    for chunk in chunks:
+                    ):
 
                         predictions, probabilities = (
                             predict_transactions(
@@ -482,7 +529,7 @@ elif page == "Batch Prediction":
                             (predictions == 0).sum()
                         )
 
-                        # Keep up to 1000 rows for display
+                        # Display maximum 1,000 rows
                         current_preview = sum(
                             len(item) for item in preview
                         )
@@ -495,7 +542,7 @@ elif page == "Batch Prediction":
                                 chunk.head(remaining)
                             )
 
-                        # Save all results
+                        # Save every prediction
                         chunk.to_csv(
                             temp_path,
                             mode="a",
@@ -509,7 +556,7 @@ elif page == "Batch Prediction":
                             f"Processed {total_transactions:,} transactions..."
                         )
 
-                    # Read the completed results
+                    # Read completed results
                     with open(temp_path, "rb") as output_file:
 
                         download_data = output_file.read()
@@ -523,7 +570,9 @@ elif page == "Batch Prediction":
                         else pd.DataFrame()
                     )
 
-                    st.session_state.batch_download_data = download_data
+                    st.session_state.batch_download_data = (
+                        download_data
+                    )
 
                     st.session_state.batch_filename = (
                         "fraud_detection_results.csv"
@@ -553,7 +602,7 @@ elif page == "Batch Prediction":
                     )
 
                     st.success(
-                        "Batch prediction completed."
+                        "Batch prediction completed successfully."
                     )
 
                 except Exception as error:
@@ -568,21 +617,19 @@ elif page == "Batch Prediction":
 
                         os.remove(temp_path)
 
-    # Display previous batch results
+    # Display batch results
     if st.session_state.batch_results is not None:
 
         st.markdown("---")
 
         st.subheader("Prediction Results")
 
-        results = st.session_state.batch_results
-
         st.caption(
             "Showing up to the first 1,000 transactions."
         )
 
         st.dataframe(
-            results,
+            st.session_state.batch_results,
             use_container_width=True
         )
 
@@ -597,16 +644,16 @@ elif page == "Batch Prediction":
             )
 
 
-# =====================================================
+# ==========================================================
 # 11. PREDICTION HISTORY
-# =====================================================
+# ==========================================================
 
 elif page == "Prediction History":
 
     st.header("Prediction History")
 
     st.write(
-        "View the transactions and CSV files processed "
+        "View transactions and CSV files processed "
         "during your current application session."
     )
 
@@ -666,9 +713,9 @@ elif page == "Prediction History":
         )
 
 
-# =====================================================
+# ==========================================================
 # 12. ABOUT PAGE
-# =====================================================
+# ==========================================================
 
 elif page == "About":
 
@@ -683,9 +730,9 @@ elif page == "About":
         It uses a Convolutional Neural Network (CNN)
         trained on credit card transaction data.
 
-        The purpose of this system is to identify
-        potentially fraudulent transactions and
-        distinguish them from normal transactions.
+        The system aims to identify potentially fraudulent
+        transactions and distinguish them from normal
+        transactions.
         """
     )
 
@@ -711,9 +758,9 @@ elif page == "About":
     )
 
 
-# =====================================================
+# ==========================================================
 # 13. FOOTER
-# =====================================================
+# ==========================================================
 
 st.markdown("---")
 
