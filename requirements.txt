@@ -1,7 +1,10 @@
 streamlit
 pandas
 numpy
-tensorflow
-joblib
 scikit-learn
+tensorflow
 matplotlib
+seaborn
+plotly
+joblib
+Pillow
